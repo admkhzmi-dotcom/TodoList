@@ -138,10 +138,17 @@ button:hover { background: #f1f1f1; }
 }
 
 .item.done .text { text-decoration: line-through; opacity: 0.6; }
+
+/* overdue border */
 .item.overdue:not(.done) { border-color: #ffcccc; }
 
-.actions { display: flex; gap: 8px; align-items: center; }
+/* ✅ overdue red text */
+.item.overdue:not(.done) .text {
+  color: red;
+  font-weight: 600;
+}
 
+.actions { display: flex; gap: 8px; align-items: center; }
 .small { padding: 8px 10px; font-size: 14px; }
 
 .footer {
