@@ -1,10 +1,12 @@
-const CACHE_NAME = "todo-pwa-rtdb-v1";
+const CACHE_NAME = "todo-pwa-rtdb-openreminders-v1";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
-  "./manifest.json"
+  "./manifest.json",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -21,6 +23,7 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Network-first so updates show quickly, fallback to cache offline
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
