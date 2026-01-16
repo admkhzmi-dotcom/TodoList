@@ -7,6 +7,7 @@ import {
   browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js";
 import { getDatabase, ref, push, set, update, remove, onValue } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js";
+import { getMessaging, getToken, onMessage, isSupported } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-messaging.js";
 
 console.log("APP.JS LOADED ✅");
 
@@ -19,6 +20,9 @@ const firebaseConfig = {
   messagingSenderId: "269210163264",
   appId: "1:269210163264:web:7f69cb80beb7bc4736a7a5"
 };
+
+// ✅ Your VAPID public key
+const VAPID_KEY = "BCs7P3mKD1Qz9BCwy7S2OhzWoC-Oqe_zuJXLwrcgP5SWa63dnCy3ESk2xI7VTaONdh7yLBwP_dgLVFemJJn-_qo";
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
@@ -37,6 +41,8 @@ const filterAllBtn = document.getElementById("filterAll");
 const filterActiveBtn = document.getElementById("filterActive");
 const filterDoneBtn = document.getElementById("filterDone");
 const sortBySelect = document.getElementById("sortBy");
+
+const enablePushBtn = document.getElementById("enablePush");
 
 // State
 let uid = null;
@@ -60,12 +66,11 @@ function isOverdue(t) {
 function isDueWithinOneDay(t) {
   if (!t.due || t.done) return false;
   const diffDays = Math.round((dueMidnight(t.due) - todayMidnight()) / 86400000);
-  return diffDays === 0 || diffDays === 1; // today or tomorrow
+  return diffDays === 0 || diffDays === 1;
 }
 
 // --------------------
 // Reminder system (when app is open)
-// - notify once per task per due date
 // --------------------
 const NOTIFIED_KEY = "todo_due_notified_open_v1";
 let notified = loadNotified();
@@ -96,17 +101,6 @@ async function ensurePermission() {
   const p = await Notification.requestPermission();
   return p === "granted";
 }
-function sendReminder(t) {
-  const when = t.due === todayStr() ? "TODAY" : "TOMORROW";
-  const msg = `Reminder: "${t.text}" is due ${when} (${t.due})`;
-
-  if ("Notification" in window && Notification.permission === "granted") {
-    new Notification("To-Do Reminder", { body: msg });
-  } else {
-    // fallback (still controlled so it won't spam)
-    alert(msg);
-  }
-}
 function todayStr() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -114,21 +108,28 @@ function todayStr() {
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
+function sendReminder(t) {
+  const when = t.due === todayStr() ? "TODAY" : "TOMORROW";
+  const msg = `Reminder: "${t.text}" is due ${when} (${t.due})`;
+
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification("To-Do Reminder", { body: msg });
+  } else {
+    alert(msg);
+  }
+}
 async function checkDueAlerts(todosArr) {
   if (!uid) return;
 
   cleanupNotified(todosArr);
-
   const dueSoon = todosArr.filter(isDueWithinOneDay);
   if (dueSoon.length === 0) return;
 
-  // try to get permission (best chance happens during user actions too)
   await ensurePermission();
 
   for (const t of dueSoon) {
     const k = notifyKey(t.id, t.due);
     if (notified[k]) continue;
-
     notified[k] = Date.now();
     saveNotified(notified);
     sendReminder(t);
@@ -137,15 +138,15 @@ async function checkDueAlerts(todosArr) {
 
 // Periodic check while app is open
 setInterval(() => {
-  const todosArr = mapToArray();
-  checkDueAlerts(todosArr);
-}, 60 * 1000); // every minute
+  checkDueAlerts(mapToArray());
+}, 60 * 1000);
 
 // --------------------
 // DB refs
 // --------------------
 const userTodosRef = () => ref(db, `users/${uid}/todos`);
 const oneTodoRef = (todoId) => ref(db, `users/${uid}/todos/${todoId}`);
+const userTokensRef = () => ref(db, `users/${uid}/fcmTokens`);
 
 function mapToArray() {
   return Object.entries(todosMap).map(([id, t]) => ({
@@ -184,8 +185,6 @@ function subscribeTodos() {
     (snapshot) => {
       todosMap = snapshot.val() || {};
       render();
-
-      // Run reminder check after data updates
       checkDueAlerts(mapToArray());
     },
     (err) => {
@@ -194,6 +193,69 @@ function subscribeTodos() {
     }
   );
 }
+
+// --------------------
+// Push Notifications (FCM) - enable by button click
+// --------------------
+enablePushBtn.addEventListener("click", async () => {
+  if (!uid) {
+    alert("Not signed in yet. Wait a moment and try again.");
+    return;
+  }
+
+  const supported = await isSupported();
+  if (!supported) {
+    alert("Push notifications not supported in this browser.");
+    return;
+  }
+
+  if (!("Notification" in window)) {
+    alert("Notifications not available in this browser.");
+    return;
+  }
+
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    alert("Notification permission not granted.");
+    return;
+  }
+
+  const reg = await navigator.serviceWorker.ready;
+
+  const messaging = getMessaging(app);
+  const token = await getToken(messaging, {
+    vapidKey: VAPID_KEY,
+    serviceWorkerRegistration: reg
+  });
+
+  if (!token) {
+    alert("No token returned. Check VAPID key + HTTPS + Firebase Authorized domain.");
+    return;
+  }
+
+  await update(userTokensRef(), { [token]: true });
+
+  alert("Push notifications enabled ✅");
+  console.log("FCM token saved ✅", token);
+});
+
+// Foreground push messages
+(async () => {
+  const supported = await isSupported();
+  if (!supported) return;
+
+  const messaging = getMessaging(app);
+  onMessage(messaging, (payload) => {
+    console.log("Foreground push received:", payload);
+
+    // Optional: show a notification even in foreground
+    if ("Notification" in window && Notification.permission === "granted") {
+      const title = payload?.notification?.title || "To-Do";
+      const body = payload?.notification?.body || "New notification";
+      new Notification(title, { body });
+    }
+  });
+})();
 
 // --------------------
 // Add todo
@@ -207,7 +269,7 @@ form.addEventListener("submit", async (e) => {
 
   const due = dueInput.value ? dueInput.value : null;
 
-  // If user sets a due date today/tomorrow, request permission (user gesture = better)
+  // Better permission chance when user interacts
   if (due) {
     const temp = { due, done: false };
     if (isDueWithinOneDay(temp)) {
@@ -219,12 +281,7 @@ form.addEventListener("submit", async (e) => {
   dueInput.value = "";
 
   const newRef = push(userTodosRef());
-  await set(newRef, {
-    text,
-    done: false,
-    due,
-    createdAt: Date.now()
-  });
+  await set(newRef, { text, done: false, due, createdAt: Date.now() });
 });
 
 // Clear done
@@ -246,14 +303,12 @@ function setFilter(next) {
   updateFilterUI();
   render();
 }
-
 function updateFilterUI() {
   [filterAllBtn, filterActiveBtn, filterDoneBtn].forEach((b) => b.classList.remove("active"));
   if (filter === "all") filterAllBtn.classList.add("active");
   if (filter === "active") filterActiveBtn.classList.add("active");
   if (filter === "done") filterDoneBtn.classList.add("active");
 }
-
 sortBySelect.addEventListener("change", render);
 
 // DB actions
@@ -271,7 +326,6 @@ const editTodoText = async (id, oldText) => {
 // Render
 function render() {
   list.innerHTML = "";
-
   const todosArr = mapToArray();
   const visible = applyFilter(applySort(todosArr, sortBySelect.value), filter);
 
@@ -305,7 +359,6 @@ function render() {
     const duePicker = document.createElement("input");
     duePicker.type = "date";
     duePicker.value = t.due ?? "";
-    duePicker.title = "Change due date";
     duePicker.addEventListener("change", () =>
       updateTodoDue(t.id, duePicker.value ? duePicker.value : null)
     );
@@ -344,7 +397,6 @@ function applyFilter(arr, f) {
   if (f === "done") return arr.filter((t) => t.done);
   return arr;
 }
-
 function applySort(arr, mode) {
   const byText = (a, b) => a.text.localeCompare(b.text);
   const dueTime = (t) => (t.due ? new Date(t.due + "T00:00:00").getTime() : Infinity);
