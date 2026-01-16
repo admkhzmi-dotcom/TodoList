@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>To-Do App+</title>
+
+    <!-- PWA -->
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="theme-color" content="#111111" />
+
+    <!-- Icons -->
+    <link rel="icon" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+
+    <!-- iOS full-screen support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+
+  <body>
+    <main class="card">
+      <header class="header">
+        <h1>To-Do</h1>
+
+        <div class="controls">
+          <div class="filters" aria-label="Filters">
+            <button class="chip active" id="filterAll" type="button">All</button>
+            <button class="chip" id="filterActive" type="button">Active</button>
+            <button class="chip" id="filterDone" type="button">Done</button>
+          </div>
+
+          <div class="sort">
+            <label for="sortBy">Sort:</label>
+            <select id="sortBy">
+              <option value="added_desc">Added (newest)</option>
+              <option value="added_asc">Added (oldest)</option>
+              <option value="due_asc">Due date (soonest)</option>
+              <option value="due_desc">Due date (latest)</option>
+              <option value="az">A → Z</option>
+              <option value="za">Z → A</option>
+            </select>
+          </div>
+        </div>
+
+        <p class="status" id="status">Connecting…</p>
+      </header>
+
+      <form id="todoForm" class="row">
+        <input id="todoInput" type="text" placeholder="Add a task..." autocomplete="off" />
+        <input id="todoDue" type="date" aria-label="Due date" />
+        <button type="submit">Add</button>
+      </form>
+
+      <p class="hint">Tip: double-click a task to edit.</p>
+
+      <ul id="todoList" class="list"></ul>
+
+      <footer class="footer">
+        <button id="clearDone" type="button">Clear done</button>
+        <span id="counter">0 left • 0 total</span>
+      </footer>
+    </main>
+
+    <!-- MAIN APP (Firebase RTDB) -->
+    <script type="module" src="./app.js"></script>
+
+    <!-- PWA Service Worker -->
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", async () => {
+          try {
+            await navigator.serviceWorker.register("./service-worker.js");
+            console.log("Service Worker registered ✅");
+          } catch (e) {
+            console.log("Service Worker registration failed ❌", e);
+          }
+        });
+      }
+    </script>
+  </body>
+</html>
