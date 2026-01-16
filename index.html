@@ -5,15 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>To-Do App+</title>
 
-    <!-- PWA -->
     <link rel="manifest" href="./manifest.json" />
     <meta name="theme-color" content="#111111" />
 
-    <!-- Icons -->
     <link rel="icon" href="./icons/icon-192.png" />
     <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
-    <!-- iOS full-screen -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
@@ -46,6 +43,9 @@
         </div>
 
         <p class="status" id="status">Connecting…</p>
+
+        <!-- ✅ Enable Push -->
+        <button id="enablePush" type="button">Enable Notifications</button>
       </header>
 
       <form id="todoForm" class="row">
@@ -66,7 +66,6 @@
 
     <script type="module" src="./app.js"></script>
 
-    <!-- PWA service worker -->
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", async () => {
@@ -81,4 +80,3 @@
     </script>
   </body>
 </html>
-
