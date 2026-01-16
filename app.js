@@ -1,10 +1,14 @@
-// app.js (type="module") — Firebase Realtime Database + Anonymous Auth
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js";
+import {
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence
+} from "https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js";
 import { getDatabase, ref, push, set, update, remove, onValue } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js";
 
-console.log("APP.JS LOADED ✅"); // helps you confirm new code is running
+console.log("APP.JS LOADED ✅");
 
 const firebaseConfig = {
   apiKey: "AIzaSyAn6Iq50V1NU955Ec7iK4PGTAlZYcsBM18",
@@ -39,8 +43,126 @@ let uid = null;
 let todosMap = {};
 let filter = "all";
 
-// Auth
+// --------------------
+// Date helpers
+// --------------------
+function dueMidnight(dueStr) {
+  return new Date(dueStr + "T00:00:00");
+}
+function todayMidnight() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+function isOverdue(t) {
+  if (!t.due || t.done) return false;
+  return dueMidnight(t.due) < todayMidnight();
+}
+function isDueWithinOneDay(t) {
+  if (!t.due || t.done) return false;
+  const diffDays = Math.round((dueMidnight(t.due) - todayMidnight()) / 86400000);
+  return diffDays === 0 || diffDays === 1; // today or tomorrow
+}
+
+// --------------------
+// Reminder system (when app is open)
+// - notify once per task per due date
+// --------------------
+const NOTIFIED_KEY = "todo_due_notified_open_v1";
+let notified = loadNotified();
+
+function loadNotified() {
+  try { return JSON.parse(localStorage.getItem(NOTIFIED_KEY)) ?? {}; }
+  catch { return {}; }
+}
+function saveNotified(map) {
+  localStorage.setItem(NOTIFIED_KEY, JSON.stringify(map));
+}
+function notifyKey(todoId, dueStr) {
+  return `${uid || "nouid"}__${todoId}__${dueStr || "nodue"}`;
+}
+function cleanupNotified(todosArr) {
+  const valid = new Set(
+    todosArr.filter(t => t.due && !t.done).map(t => notifyKey(t.id, t.due))
+  );
+  for (const k of Object.keys(notified)) {
+    if (!valid.has(k)) delete notified[k];
+  }
+  saveNotified(notified);
+}
+async function ensurePermission() {
+  if (!("Notification" in window)) return false;
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;
+  const p = await Notification.requestPermission();
+  return p === "granted";
+}
+function sendReminder(t) {
+  const when = t.due === todayStr() ? "TODAY" : "TOMORROW";
+  const msg = `Reminder: "${t.text}" is due ${when} (${t.due})`;
+
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification("To-Do Reminder", { body: msg });
+  } else {
+    // fallback (still controlled so it won't spam)
+    alert(msg);
+  }
+}
+function todayStr() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+async function checkDueAlerts(todosArr) {
+  if (!uid) return;
+
+  cleanupNotified(todosArr);
+
+  const dueSoon = todosArr.filter(isDueWithinOneDay);
+  if (dueSoon.length === 0) return;
+
+  // try to get permission (best chance happens during user actions too)
+  await ensurePermission();
+
+  for (const t of dueSoon) {
+    const k = notifyKey(t.id, t.due);
+    if (notified[k]) continue;
+
+    notified[k] = Date.now();
+    saveNotified(notified);
+    sendReminder(t);
+  }
+}
+
+// Periodic check while app is open
+setInterval(() => {
+  const todosArr = mapToArray();
+  checkDueAlerts(todosArr);
+}, 60 * 1000); // every minute
+
+// --------------------
+// DB refs
+// --------------------
+const userTodosRef = () => ref(db, `users/${uid}/todos`);
+const oneTodoRef = (todoId) => ref(db, `users/${uid}/todos/${todoId}`);
+
+function mapToArray() {
+  return Object.entries(todosMap).map(([id, t]) => ({
+    id,
+    text: t?.text ?? "",
+    done: !!t?.done,
+    due: t?.due ?? null,
+    createdAt: t?.createdAt ?? 0
+  }));
+}
+
+// --------------------
+// Auto login (anonymous) + persistence
+// --------------------
 statusEl.textContent = "Signing in…";
+await setPersistence(auth, browserLocalPersistence);
+
 signInAnonymously(auth).catch((e) => {
   console.error(e);
   statusEl.textContent = "Auth error. Enable Anonymous Auth + Authorized Domains.";
@@ -53,26 +175,29 @@ onAuthStateChanged(auth, (user) => {
   subscribeTodos();
 });
 
-// DB refs
-const userTodosRef = () => ref(db, `users/${uid}/todos`);
-const oneTodoRef = (todoId) => ref(db, `users/${uid}/todos/${todoId}`);
-
+// --------------------
 // Realtime sync
+// --------------------
 function subscribeTodos() {
   onValue(
     userTodosRef(),
     (snapshot) => {
       todosMap = snapshot.val() || {};
       render();
+
+      // Run reminder check after data updates
+      checkDueAlerts(mapToArray());
     },
     (err) => {
       console.error(err);
-      statusEl.textContent = "Permission denied. Update RTDB rules.";
+      statusEl.textContent = "DB permission denied. Check RTDB rules.";
     }
   );
 }
 
+// --------------------
 // Add todo
+// --------------------
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!uid) return;
@@ -81,6 +206,14 @@ form.addEventListener("submit", async (e) => {
   if (!text) return;
 
   const due = dueInput.value ? dueInput.value : null;
+
+  // If user sets a due date today/tomorrow, request permission (user gesture = better)
+  if (due) {
+    const temp = { due, done: false };
+    if (isDueWithinOneDay(temp)) {
+      await ensurePermission();
+    }
+  }
 
   input.value = "";
   dueInput.value = "";
@@ -139,14 +272,7 @@ const editTodoText = async (id, oldText) => {
 function render() {
   list.innerHTML = "";
 
-  const todosArr = Object.entries(todosMap).map(([id, t]) => ({
-    id,
-    text: t?.text ?? "",
-    done: !!t?.done,
-    due: t?.due ?? null,
-    createdAt: t?.createdAt ?? 0
-  }));
-
+  const todosArr = mapToArray();
   const visible = applyFilter(applySort(todosArr, sortBySelect.value), filter);
 
   for (const t of visible) {
@@ -179,7 +305,10 @@ function render() {
     const duePicker = document.createElement("input");
     duePicker.type = "date";
     duePicker.value = t.due ?? "";
-    duePicker.addEventListener("change", () => updateTodoDue(t.id, duePicker.value ? duePicker.value : null));
+    duePicker.title = "Change due date";
+    duePicker.addEventListener("change", () =>
+      updateTodoDue(t.id, duePicker.value ? duePicker.value : null)
+    );
 
     meta.appendChild(dueBadge);
     meta.appendChild(duePicker);
@@ -229,12 +358,4 @@ function applySort(arr, mode) {
     case "za": return arr.sort((a, b) => byText(b, a));
     default: return arr;
   }
-}
-
-function isOverdue(t) {
-  if (!t.due || t.done) return false;
-  const today = new Date();
-  const due = new Date(t.due + "T00:00:00");
-  const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  return due < todayMid;
 }
